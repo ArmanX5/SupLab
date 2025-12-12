@@ -1,0 +1,5 @@
+{
+  "name": "Completeness Axiom Visualizer",
+  "description": "Interactive educational tool for Real Analysis exploring Supremum, Infimum, and the Completeness Axiom.",
+  "requestFramePermissions": []
+}

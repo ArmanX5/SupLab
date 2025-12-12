@@ -97,7 +97,7 @@ const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ result, epsilon, setEpsil
                 <p className="text-xs text-slate-600 leading-relaxed">
                     {result.boundedAbove && typeof result.sup === 'number' ? (
                         <>
-                            <strong>Approximation Property:</strong> Since {formatNum(result.sup)} is the Sup, for any ε > 0, there exists <span className="font-mono">a ∈ A</span> such that:
+                            <strong>Approximation Property:</strong> Since {formatNum(result.sup)} is the Sup, for any ε {'>'} 0, there exists <span className="font-mono">a ∈ A</span> such that:
                             <div className="mt-2 p-2 bg-white rounded border border-indigo-100 font-mono text-center text-indigo-800">
                                 {formatNum(result.sup - epsilon)} &lt; a ≤ {formatNum(result.sup)}
                             </div>

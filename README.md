@@ -1,20 +1,51 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Math Analysis App
 
-# Run and deploy your AI Studio app
+This is a simple web application for visualizing and analyzing mathematical functions. It provides a number line for interactive exploration of function behavior.
 
-This contains everything you need to run your app locally.
+## Features
 
-View your app in AI Studio: https://ai.studio/apps/drive/1wH5U13tVjnUgxUgsHkJ1u8EhHM-wcKDC
+*   **Interactive Number Line:** Visualize function values on a dynamic number line.
+*   **Function Input:** Easily input and update mathematical functions.
+*   **Analysis Panel:** View detailed analysis of the function.
 
-## Run Locally
+## Getting Started
 
-**Prerequisites:**  Node.js
+To run this project locally, follow these steps:
 
+1.  Clone the repository:
+    ```bash
+    git clone https://github.com/ArmanX5/SupLab.git
+    cd SupLab
+    ```
+2.  Install dependencies:
+    ```bash
+    npm install
+    ```
+3.  Start the development server:
+    ```bash
+    npm run dev
+    ```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Open your browser to `http://localhost:3000` (or the port indicated in your terminal) to view the application.
+
+## Project Structure
+
+*   `App.tsx`: Main application component.
+*   `index.html`: HTML entry point.
+*   `components/`: Contains reusable UI components.
+    *   `AnalysisPanel.tsx`: Displays function analysis.
+    *   `InputPanel.tsx`: Handles function input.
+    *   `NumberLine.tsx`: Renders the interactive number line.
+*   `utils/`: Utility functions.
+    *   `mathUtils.ts`: Mathematical helper functions.
+
+## Technologies Used
+
+*   React
+*   TypeScript
+*   Vite
+*   Tailwind CSS (or similar styling library, if used)
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.

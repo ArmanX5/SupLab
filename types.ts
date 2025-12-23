@@ -1,44 +1,85 @@
-export type ComponentType = 'interval' | 'finite' | 'sequence';
-export type Universe = 'R' | 'Q';
 
-export type IntervalParams = {
-  start: number;
-  end: number;
-  leftOpen: boolean;
-  rightOpen: boolean;
-};
+export type Dimension = 1 | 2 | 3;
+export type PointND = number[];
 
-export type SequenceType = '1/n' | 'harmonic' | 'alternating' | 'geometric' | 'custom';
+export type ExtendedReal = 
+  | { type: 'value'; val: number }
+  | { type: 'infinity' }
+  | { type: 'neg_infinity' }
+  | { type: 'empty' };
 
-export type SequenceParams = {
-  type: SequenceType;
-  customFormula?: string;
-  limit: number;
-};
+export type MetricType = 'l2' | 'l1' | 'linf';
 
-export type FiniteParams = {
-  points: number[];
-};
+export interface Metric {
+  id: MetricType;
+  name: string;
+  compute: (p1: PointND, p2: PointND) => number;
+}
+
+export type ComponentType = 'interval' | 'finite' | 'sequence' | 'function';
+export type TopologyType = ComponentType;
 
 export interface SetComponent {
   id: string;
-  type: ComponentType;
-  interval?: IntervalParams;
-  finite?: FiniteParams;
-  sequence?: SequenceParams;
+  type: TopologyType;
+  interval?: {
+    start: number;
+    end: number;
+    leftOpen: boolean;
+    rightOpen: boolean;
+  };
+  finite?: {
+    points: number[];
+  };
+  sequence?: {
+    type: string;
+    limit: number;
+    customFormula?: string;
+  };
+  function?: {
+    funcType: 'explicit' | 'parametric' | 'implicit';
+    formulaX?: string;
+    formulaY?: string;
+    formulaZ?: string;
+    domain: [number, number];
+    samples: number;
+  };
   color?: string;
 }
 
+export interface SpaceDomain {
+  dimension: Dimension;
+  bounds: {
+    xMin: number;
+    xMax: number;
+    yMin?: number;
+    yMax?: number;
+    zMin?: number;
+    zMax?: number;
+  };
+  isBoundedSpace: boolean;
+}
+
+export interface DiameterInfo {
+  value: number | 'infinity' | null;
+  point1?: PointND;
+  point2?: PointND;
+}
+
 export interface AnalysisResult {
-  sup: number | 'infinity' | null; // The actual supremum in the current universe
+  sup: number | 'infinity' | null;
   inf: number | '-infinity' | null;
   max: number | null;
   min: number | null;
+  diameter: number | 'infinity' | null;
+  diameterInfo?: DiameterInfo;
   boundedAbove: boolean;
   boundedBelow: boolean;
+  isBounded: boolean;
   isEmpty: boolean;
-  
-  // Completeness Axiom specific fields
-  completenessGap: boolean; // True if bounded but sup DNE in universe
-  theoreticalSup: number | 'infinity' | null; // The sup in R (for visualization)
+  dimension: Dimension;
+  isCauchy?: boolean;
+  convergesTo?: number | null;
+  isCompleteInSpace?: boolean;
+  isCompact?: boolean;
 }

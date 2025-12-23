@@ -1,251 +1,370 @@
-import { SetComponent, AnalysisResult, Universe } from '../types';
 
-// Safe evaluator for user math formulas
-// Supports basic Math functions and converts ^ to **
-export const safeEvaluate = (formula: string, n: number): number | null => {
+import { SetComponent, AnalysisResult, Dimension, PointND, Metric, MetricType, SpaceDomain } from '../types';
+import { create, all } from 'mathjs';
+import { DiameterCalculator, euclideanDistance } from './diameterCalculator';
+
+const math = create(all);
+
+// Restrict to Euclidean metric only
+export const METRICS: Record<MetricType, Metric> = {
+  l2: {
+    id: 'l2',
+    name: 'Euclidean (ℓ²)',
+    compute: euclideanDistance
+  },
+  l1: {
+    id: 'l1',
+    name: 'Manhattan (ℓ¹) [Disabled]',
+    compute: euclideanDistance // Fallback to Euclidean
+  },
+  linf: {
+    id: 'linf',
+    name: 'Chebyshev (ℓ∞) [Disabled]',
+    compute: euclideanDistance // Fallback to Euclidean
+  }
+};
+
+export const formatNum = (n: number | null): string => {
+  if (n === null) return 'NaN';
+  if (!isFinite(n)) return n > 0 ? '∞' : '-∞';
+  return (Math.round(n * 1e6) / 1e6).toString();
+};
+
+/**
+ * Enhanced formula evaluation using mathjs
+ * Supports: trigonometric, logarithmic, exponential, power functions
+ * Handles: pi, e, complex expressions
+ */
+export const safeEvaluate = (formula: string, vars: Record<string, number>): number | null => {
   try {
-    // 1. Basic sanitization: allow numbers, n, arithmetic, parens, and Math functions
+    // Prepare scope with variables
+    const scope = { ...vars, pi: Math.PI, e: Math.E };
     
-    // Replace ^ with ** for powers
-    let jsFormula = formula.replace(/\^/g, '**');
+    // Compile and evaluate
+    const compiled = math.compile(formula);
+    const result = compiled.evaluate(scope);
     
-    // Map common math functions to Math.func
-    const mathFuncs = ['sin', 'cos', 'tan', 'sqrt', 'abs', 'log', 'exp', 'floor', 'ceil', 'round', 'pow', 'max', 'min'];
-    mathFuncs.forEach(func => {
-      const regex = new RegExp(`\\b${func}\\b`, 'g');
-      jsFormula = jsFormula.replace(regex, `Math.${func}`);
-    });
-
-    // Constants
-    jsFormula = jsFormula.replace(/\bpi\b/gi, 'Math.PI');
-    jsFormula = jsFormula.replace(/\be\b/gi, 'Math.E');
-
-    // Create a function with 'n' as argument
-    const f = new Function('n', `return (${jsFormula});`);
-    const result = f(n);
+    // Handle mathjs complex numbers and convert to real
+    if (typeof result === 'number' && isFinite(result)) {
+      return result;
+    }
     
-    if (typeof result !== 'number' || isNaN(result) || !isFinite(result)) return null;
-    return result;
-  } catch (e) {
+    // Check if it's a mathjs number type
+    if (result && typeof result === 'object' && 're' in result) {
+      const realPart = (result as any).re;
+      if (typeof realPart === 'number' && isFinite(realPart)) {
+        return realPart;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.warn('Formula evaluation error:', error);
     return null;
   }
 };
 
-export const getSequencePoints = (type: string, count: number = 40, customFormula?: string): number[] => {
-  const points: number[] = [];
-  
-  if (type === 'custom' && customFormula) {
-    for (let n = 1; n <= count; n++) {
-      const val = safeEvaluate(customFormula, n);
-      if (val !== null) points.push(val);
-    }
-    return points;
+/**
+ * Validate formula syntax without evaluation
+ */
+export const validateFormula = (formula: string, expectedVars: string[]): { valid: boolean; error?: string } => {
+  try {
+    const compiled = math.compile(formula);
+    
+    // Check if formula contains expected variables
+    const testScope: Record<string, number> = {};
+    expectedVars.forEach(v => testScope[v] = 0);
+    testScope.pi = Math.PI;
+    testScope.e = Math.E;
+    
+    const result = compiled.evaluate(testScope);
+    
+    return { valid: true };
+  } catch (error) {
+    return { 
+      valid: false, 
+      error: error instanceof Error ? error.message : 'Invalid formula' 
+    };
+  }
+};
+
+const normalizeFunctionDomain = (domain: [number, number]): [number, number] => {
+  let [start, end] = domain;
+
+  if (!Number.isFinite(start)) start = -10;
+  if (!Number.isFinite(end)) end = 10;
+
+  if (start > end) [start, end] = [end, start];
+
+  if (start === end) {
+    const delta = Math.max(1, Math.abs(start) * 0.05, 0.5);
+    start -= delta;
+    end += delta;
   }
 
+  return [start, end];
+};
+
+export const getSequencePoints = (type: string, count: number = 100, customFormula?: string): number[] => {
+  const points: number[] = [];
   for (let n = 1; n <= count; n++) {
-    if (type === '1/n' || type === 'harmonic') points.push(1/n);
-    if (type === 'alternating') points.push(Math.pow(-1, n));
-    if (type === 'geometric') points.push(Math.pow(0.5, n));
+    if (type === 'custom' && customFormula) {
+      const v = safeEvaluate(customFormula, { n });
+      if (v !== null) points.push(v);
+    } else {
+      if (type === '1/n' || type === 'harmonic') points.push(1/n);
+      if (type === 'alternating') points.push(Math.pow(-1, n) / n);
+      if (type === 'geometric') points.push(Math.pow(0.5, n));
+    }
   }
   return points;
 };
 
-// Advanced heuristic to determine if a custom sequence is unbounded
-const analyzeSequence = (formula: string) => {
-    // 1. Sample standard range for basic min/max
-    const smallSample: number[] = [];
-    for(let i=1; i<=100; i++) {
-        const v = safeEvaluate(formula, i);
-        if (v !== null) smallSample.push(v);
-    }
-    
-    let localMax = smallSample.length > 0 ? Math.max(...smallSample) : -Infinity;
-    let localMin = smallSample.length > 0 ? Math.min(...smallSample) : Infinity;
+export const getFunctionPoints = (comp: SetComponent, domain?: SpaceDomain): PointND[] => {
+  if (comp.type !== 'function' || !comp.function) return [];
+  const { funcType, formulaX, formulaY, formulaZ, domain: funcDomain, samples } = comp.function;
+  const points: PointND[] = [];
+  const [start, end] = normalizeFunctionDomain(funcDomain);
+  const sampleCount = Math.max(1, samples);
+  const range = end - start;
+  const step = range / sampleCount;
 
-    // 2. Tail Analysis (Check N=1000, N=10000, N=100000)
-    // This detects slow divergence like log(n) or sqrt(n) vs convergence like 1-1/n
-    const t1 = safeEvaluate(formula, 1000);
-    const t2 = safeEvaluate(formula, 10000);
-    const t3 = safeEvaluate(formula, 100000);
+  if (!Number.isFinite(step) || step === 0 || range <= 0) {
+    return points;
+  }
 
-    let isUnboundedAbove = false;
-    let isUnboundedBelow = false;
-
-    // Check for large magnitude divergence
-    const largeThreshold = 10000;
-    const terms = [t1, t2, t3].filter(t => t !== null) as number[];
-    
-    if (terms.some(t => t > largeThreshold)) isUnboundedAbove = true;
-    if (terms.some(t => t < -largeThreshold)) isUnboundedBelow = true;
-
-    // Check for slow monotonic divergence (e.g. sqrt(n), ln(n))
-    // If t3 > t2 > t1 AND differences are significant, assume unbounded
-    if (t1 !== null && t2 !== null && t3 !== null) {
-        // Upper Bound Check
-        if (t3 > t2 && t2 > t1) {
-            const diff1 = t2 - t1;
-            const diff2 = t3 - t2;
-            // If it keeps growing by a non-trivial amount
-            if (diff2 > 0.1) { 
-                isUnboundedAbove = true;
-            }
+  if (funcType === 'explicit' && formulaY) {
+    // R² explicit: y = f(x)
+    for (let x = start; x <= end; x += step) {
+      const y = safeEvaluate(formulaY, { x });
+      if (y !== null) {
+        // Apply domain constraints if provided
+        if (domain) {
+          const { bounds } = domain;
+          if (x >= bounds.xMin && x <= bounds.xMax && 
+              y >= (bounds.yMin ?? -Infinity) && y <= (bounds.yMax ?? Infinity)) {
+            points.push([x, y, 0]);
+          }
+        } else {
+          points.push([x, y, 0]);
         }
-        
-        // Lower Bound Check
-        if (t3 < t2 && t2 < t1) {
-            const diff1 = t1 - t2;
-            const diff2 = t2 - t3;
-             if (diff2 > 0.1) {
-                isUnboundedBelow = true;
-            }
-        }
+      }
     }
+  } else if (funcType === 'parametric' && (formulaX || formulaY || formulaZ)) {
+    // R³ parametric: r(t) = <x(t), y(t), z(t)>
+    for (let t = start; t <= end; t += step) {
+      const x = formulaX ? safeEvaluate(formulaX, { t }) : 0;
+      const y = formulaY ? safeEvaluate(formulaY, { t }) : 0;
+      const z = formulaZ ? safeEvaluate(formulaZ, { t }) : 0;
+      
+      if (x !== null && y !== null && z !== null) {
+        // Apply domain constraints
+        if (domain) {
+          const { bounds } = domain;
+          if (x >= bounds.xMin && x <= bounds.xMax &&
+              y >= (bounds.yMin ?? -Infinity) && y <= (bounds.yMax ?? Infinity) &&
+              z >= (bounds.zMin ?? -Infinity) && z <= (bounds.zMax ?? Infinity)) {
+            points.push([x, y, z]);
+          }
+        } else {
+          points.push([x, y, z]);
+        }
+      }
+    }
+  } else if (funcType === 'implicit' && formulaY) {
+    // R² implicit: F(x,y) = 0
+    // R³ implicit: F(x,y,z) = 0
+    const gridSize = Math.max(1, Math.floor(Math.sqrt(sampleCount * 5)));
+    const xStep = range / gridSize;
+    const yStep = range / gridSize;
+    const threshold = 0.1; // Points where |F(x,y,z)| < threshold
     
-    // Update local max/min with tail values to ensure we cover the range
-    terms.forEach(t => {
-        if (t > localMax) localMax = t;
-        if (t < localMin) localMin = t;
-    });
+    // Check if formula contains 'z' variable for 3D implicit surface
+    const is3D = formulaY.includes('z');
+    
+    if (!Number.isFinite(xStep) || xStep === 0 || !Number.isFinite(yStep) || yStep === 0) {
+      return points;
+    }
 
-    return {
-        isUnboundedAbove,
-        isUnboundedBelow,
-        approxMax: localMax,
-        approxMin: localMin
-    };
+    if (is3D) {
+      // 3D implicit surface F(x,y,z) = 0
+      const zStep = range / gridSize;
+      if (!Number.isFinite(zStep) || zStep === 0) return points;
+      for (let x = start; x <= end; x += xStep) {
+        for (let y = start; y <= end; y += yStep) {
+          for (let z = start; z <= end; z += zStep) {
+            const val = safeEvaluate(formulaY, { x, y, z });
+            if (val !== null && Math.abs(val) < threshold) {
+              if (domain) {
+                const { bounds } = domain;
+                if (x >= bounds.xMin && x <= bounds.xMax &&
+                    y >= (bounds.yMin ?? -Infinity) && y <= (bounds.yMax ?? Infinity) &&
+                    z >= (bounds.zMin ?? -Infinity) && z <= (bounds.zMax ?? Infinity)) {
+                  points.push([x, y, z]);
+                }
+              } else {
+                points.push([x, y, z]);
+              }
+            }
+          }
+        }
+      }
+    } else {
+      // 2D implicit curve F(x,y) = 0
+      for (let x = start; x <= end; x += xStep) {
+        for (let y = start; y <= end; y += yStep) {
+          const val = safeEvaluate(formulaY, { x, y });
+          if (val !== null && Math.abs(val) < threshold) {
+            if (domain) {
+              const { bounds } = domain;
+              if (x >= bounds.xMin && x <= bounds.xMax &&
+                  y >= (bounds.yMin ?? -Infinity) && y <= (bounds.yMax ?? Infinity)) {
+                points.push([x, y, 0]);
+              }
+            } else {
+              points.push([x, y, 0]);
+            }
+          }
+        }
+      }
+    }
+  }
+  return points;
 };
 
-const isIrrationalApprox = (val: number): boolean => {
-    // Check against known irrationals used in common analysis problems
-    const irrationals = [
-        Math.SQRT2, 
-        Math.PI, 
-        Math.E, 
-        Math.sqrt(3), 
-        Math.sqrt(5)
-    ];
-    // We check if the value is extremely close to a known irrational
-    return irrationals.some(irr => Math.abs(val - irr) < 1e-7);
-};
-
-export const calculateAnalysis = (components: SetComponent[], universe: Universe = 'R'): AnalysisResult => {
-  // 1. Check if empty
+export const calculateAnalysis = (
+  components: SetComponent[], 
+  dimension: Dimension, 
+  activeMetric: Metric,
+  spaceDomain?: SpaceDomain
+): AnalysisResult => {
   if (components.length === 0) {
     return {
-      sup: null, inf: null, max: null, min: null,
-      boundedAbove: true, boundedBelow: true, isEmpty: true,
-      completenessGap: false, theoreticalSup: null
+      sup: null, inf: null, max: null, min: null, diameter: null,
+      boundedAbove: true, boundedBelow: true, isEmpty: true, dimension, isBounded: true,
+      isCompact: false
     };
   }
 
-  let anyNotEmpty = false;
+  let globalMax = -Infinity;
+  let globalMin = Infinity;
   let isUnboundedAbove = false;
   let isUnboundedBelow = false;
+  let hasInfiniteComponent = false;
   
-  const componentSups: { val: number, isInSet: boolean }[] = [];
-  const componentInfs: { val: number, isInSet: boolean }[] = [];
+  let isCauchy = true;
+  let limit: number | null = null;
+  let isComplete = true;
 
-  for (const comp of components) {
+  const sequenceLimits: number[] = [];
+  const allPointsForDiameter: PointND[] = [];
+
+  components.forEach(comp => {
+    let scalarAnalysisPoints: number[] = [];
+    let ndPoints: PointND[] = [];
+    
     if (comp.type === 'interval' && comp.interval) {
-      const { start, end, leftOpen, rightOpen } = comp.interval;
-      if (start > end) continue; 
-      anyNotEmpty = true;
-
-      if (end === Infinity) isUnboundedAbove = true;
-      else componentSups.push({ val: end, isInSet: !rightOpen });
-
-      if (start === -Infinity) isUnboundedBelow = true;
-      else componentInfs.push({ val: start, isInSet: !leftOpen });
-    } 
-    else if (comp.type === 'finite' && comp.finite) {
-      if (comp.finite.points.length === 0) continue;
-      anyNotEmpty = true;
-      const max = Math.max(...comp.finite.points);
-      const min = Math.min(...comp.finite.points);
+      if (comp.interval.start === -Infinity) isUnboundedBelow = true;
+      else globalMin = Math.min(globalMin, comp.interval.start);
+      if (comp.interval.end === Infinity) isUnboundedAbove = true;
+      else globalMax = Math.max(globalMax, comp.interval.end);
       
-      componentSups.push({ val: max, isInSet: true });
-      componentInfs.push({ val: min, isInSet: true });
-    }
-    else if (comp.type === 'sequence' && comp.sequence) {
-      anyNotEmpty = true;
-      
-      if (comp.sequence.type === 'custom' && comp.sequence.customFormula) {
-        // Use Robust Analysis
-        const analysis = analyzeSequence(comp.sequence.customFormula);
-        
-        if (analysis.isUnboundedAbove) isUnboundedAbove = true;
-        else componentSups.push({ val: analysis.approxMax, isInSet: true }); 
-
-        if (analysis.isUnboundedBelow) isUnboundedBelow = true;
-        else componentInfs.push({ val: analysis.approxMin, isInSet: true });
-
+      if (comp.interval.start === -Infinity || comp.interval.end === Infinity) {
+        hasInfiniteComponent = true;
       } else {
-        // Standard sequences
-        if (comp.sequence.type === '1/n') {
-            componentSups.push({ val: 1, isInSet: true });
-            componentInfs.push({ val: 0, isInSet: false });
-        } else if (comp.sequence.type === 'alternating') {
-            componentSups.push({ val: 1, isInSet: true });
-            componentInfs.push({ val: -1, isInSet: true });
-        } else if (comp.sequence.type === 'geometric') {
-            componentSups.push({ val: 0.5, isInSet: true });
-            componentInfs.push({ val: 0, isInSet: false });
-        }
+        // Add interval endpoints for diameter calculation
+        ndPoints.push([comp.interval.start]);
+        ndPoints.push([comp.interval.end]);
+      }
+    } else if (comp.type === 'finite' && comp.finite) {
+      scalarAnalysisPoints = comp.finite.points;
+      ndPoints = comp.finite.points.map(p => [p]);
+    } else if (comp.type === 'sequence' && comp.sequence) {
+      hasInfiniteComponent = true;
+      scalarAnalysisPoints = getSequencePoints(comp.sequence.type, comp.sequence.limit, comp.sequence.customFormula);
+      ndPoints = scalarAnalysisPoints.map(p => [p]);
+      
+      if (scalarAnalysisPoints.length > 5) {
+        const last = scalarAnalysisPoints[scalarAnalysisPoints.length - 1];
+        const prev = scalarAnalysisPoints[scalarAnalysisPoints.length - 2];
+        const diff = activeMetric.compute([last], [prev]);
+        if (diff > 0.05) isCauchy = false;
+        limit = last; 
+        sequenceLimits.push(limit);
+      }
+    } else if (comp.type === 'function' && comp.function) {
+      const fPoints = getFunctionPoints(comp, spaceDomain);
+      ndPoints = fPoints;
+      
+      if (comp.function.funcType === 'explicit') {
+        scalarAnalysisPoints = fPoints.map(p => p[1]); // y-values
+      } else {
+        scalarAnalysisPoints = fPoints.map(p => p[0]); // x-values for bounds
       }
     }
-  }
+    
+    // Collect all n-dimensional points for diameter calculation
+    allPointsForDiameter.push(...ndPoints);
+    
+    if (scalarAnalysisPoints.length > 0) {
+      const pMax = Math.max(...scalarAnalysisPoints);
+      const pMin = Math.min(...scalarAnalysisPoints);
+      if (pMax > globalMax) globalMax = pMax;
+      if (pMin < globalMin) globalMin = pMin;
+    }
+  });
 
-  if (!anyNotEmpty) {
-    return {
-      sup: null, inf: null, max: null, min: null,
-      boundedAbove: true, boundedBelow: true, isEmpty: true,
-      completenessGap: false, theoreticalSup: null
-    };
-  }
-
-  const supValues = componentSups.map(c => c.val);
-  const infValues = componentInfs.map(c => c.val);
-
-  const numericSup = supValues.length > 0 ? Math.max(...supValues) : null;
-  const numericInf = infValues.length > 0 ? Math.min(...infValues) : null;
-
-  // Theoretical Sup (In Real Numbers)
-  const theoreticalSup: number | 'infinity' | null = isUnboundedAbove ? 'infinity' : numericSup;
-  const theoreticalInf: number | '-infinity' | null = isUnboundedBelow ? '-infinity' : numericInf;
-
-  // Universe Logic: Completeness Gap Detection
-  let actualSup: number | 'infinity' | null = theoreticalSup;
-  let completenessGap = false;
-
-  if (universe === 'Q' && typeof theoreticalSup === 'number') {
-      // Check if theoretical sup is irrational
-      if (isIrrationalApprox(theoreticalSup)) {
-          completenessGap = true;
-          actualSup = null; // Supremum does not exist in Q
+  // Check completeness
+  sequenceLimits.forEach(L => {
+    const inSet = components.some(c => {
+      if (c.type === 'interval' && c.interval) {
+        const { start, end, leftOpen, rightOpen } = c.interval;
+        return (leftOpen ? L > start : L >= start) && (rightOpen ? L < end : L <= end);
       }
+      if (c.type === 'finite' && c.finite) return c.finite.points.some(p => Math.abs(p - L) < 1e-6);
+      return false; 
+    });
+    if (!inSet) isComplete = false;
+  });
+
+  const sup = isUnboundedAbove ? 'infinity' : (globalMax === -Infinity ? null : globalMax);
+  const inf = isUnboundedBelow ? '-infinity' : (globalMin === Infinity ? null : globalMin);
+
+  // Calculate diameter using DiameterCalculator
+  let diameterInfo;
+  let diameterValue: number | 'infinity' | null;
+  
+  if (isUnboundedAbove || isUnboundedBelow) {
+    diameterValue = 'infinity';
+    diameterInfo = { value: 'infinity' as const };
+  } else if (allPointsForDiameter.length === 0) {
+    diameterValue = null;
+    diameterInfo = { value: null };
+  } else {
+    // Determine if this is a manifold (continuous function)
+    const hasFunction = components.some(c => c.type === 'function');
+    diameterInfo = DiameterCalculator.calculate(allPointsForDiameter, hasFunction);
+    diameterValue = diameterInfo.value;
   }
 
-  // Max exists only if bounded AND sup is in set (and we aren't in a gap)
-  let isMax = false;
-  if (!completenessGap && typeof actualSup === 'number') {
-      isMax = componentSups.some(c => Math.abs(c.val - (actualSup as number)) < 1e-9 && c.isInSet);
-  }
-
-  let isMin = false;
-  if (typeof theoreticalInf === 'number') {
-       // Simplified logic for Infimum (ignoring gaps for now for simplicity, focus is on Sup)
-       isMin = componentInfs.some(c => Math.abs(c.val - theoreticalInf) < 1e-9 && c.isInSet);
-  }
+  // Check compactness: in R^n, compact <=> closed and bounded
+  const isBoundedSet = !isUnboundedAbove && !isUnboundedBelow;
+  const isCompact = isBoundedSet && isComplete;
 
   return {
-    sup: actualSup,
-    inf: theoreticalInf, // Keeping Inf logic simple R for now
-    max: isMax && typeof actualSup === 'number' ? actualSup : null,
-    min: isMin && typeof theoreticalInf === 'number' ? theoreticalInf : null,
+    sup, inf,
+    max: (sup !== 'infinity' && sup !== null) ? sup : null,
+    min: (inf !== '-infinity' && inf !== null) ? inf : null,
+    diameter: diameterValue,
+    diameterInfo,
     boundedAbove: !isUnboundedAbove,
     boundedBelow: !isUnboundedBelow,
+    isBounded: isBoundedSet,
     isEmpty: false,
-    completenessGap,
-    theoreticalSup
+    dimension,
+    isCauchy: hasInfiniteComponent ? isCauchy : undefined,
+    convergesTo: sequenceLimits.length > 0 ? sequenceLimits[0] : null,
+    isCompleteInSpace: hasInfiniteComponent ? isComplete : true,
+    isCompact
   };
 };
